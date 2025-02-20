@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-
+#!/usr/local/bin/python
 from ciscoconfparse import CiscoConfParse
 from os import walk, makedirs, listdir
 from os.path import isfile, join, splitext, exists
@@ -11,7 +10,7 @@ def main():
   # Permit limited configuration via command-line args
   debug = False                         # Debug YAML to console defaults to off: enable with --debug
   root_path = 'configurations/'         # Root dir is 'configurations': modify with --root="mydir"
-  domain = 'nwid.bris.ac.uk'            # Default domain is 'nwid.bris.ac.uk': modify with --domain="mydomain"
+  domain = 'acme.intern'                # Default domain is 'nwid.bris.ac.uk': modify with --domain="mydomain"
   if (len(sys.argv) > 1):
     for arg in sys.argv:
       if arg == '--debug':
@@ -25,7 +24,7 @@ def main():
         if domain_value != '':
           domain = domain_value.replace('"', '')
   
-  subdirs = walk(root_path).next()[1]   # obtain all subdirectories
+  subdirs = []   # obtain all subdirectories
   subdirs.append('')                    # add root directory
 
   # Parse all files in all subdirectories
@@ -35,25 +34,18 @@ def main():
       if filename != '.gitignore':                                              # Do not parse .gitignores
         input = CiscoConfParse(root_path + subdir + '/' + filename)             # Get our CiscoConfParse-formatted input
         output_yaml = convert_to_yaml(input)                                    # Parse input config into output YAML
-        output_path = 'yaml/' + root_path + subdir
-        print('Outputting ' + output_path + splitext(filename)[0] + '.' + domain + '.yml YAML')
+        output_path = 'yaml/' + subdir
+        print('Outputting ' + output_path + filename + '.' + domain + '.yml YAML')
         write_output_yaml_to_file(output_yaml, output_path, filename, domain)   # Write our YAML to disk
+        regex_yaml(output_path + filename + '.' + domain +'.yml')               # Perform regex search and replace on the YAML
         if (debug):                                                             # If debug mode specified output YAML to console
           print(output_path + splitext(filename)[0] + '.' + domain + '.yml YAML Output:')
-          print output_yaml
+          print(output_yaml)
 
 
 # The workhorse function that reads the Cisco config and returns our output config object
 def convert_to_yaml(input_config):
   output_config = {} # Create master dict for output data
-
-  # switch stacks
-  stacks = input_config.find_objects(r'switch [0-9]+ provision (.*)')
-  if stacks:
-    output_config['switch_stack'] = []
-    for line in stacks:
-      stack = line.re_match(r'switch [0-9]+ provision (.*)')
-      output_config['switch_stack'].append(stack)
 
   # Interfaces
   interfaces = input_config.find_objects(r'interface')     # Create interfaces object
@@ -66,7 +58,7 @@ def convert_to_yaml(input_config):
       # Insert interface name
       interface_name = interface.re_match(r'^interface (\S+)$')
       if interface_name:
-          interface_dict['name'] = interface_name
+          interface_dict['aname'] = interface_name
 
       # switchport
 
@@ -75,67 +67,78 @@ def convert_to_yaml(input_config):
       if switchport_interfaces:
 
         # Create switchport dict if it does not yet exist
-        if not 'switchport' in interface_dict:
-          interface_dict['switchport'] = {}
+        #if not 'switchport' in interface_dict:
+         # interface_dict['switchport'] = {}
 
         for line in switchport_interfaces:
 
           # access vlan
           access_vlan = line.re_match(r' switchport access vlan (\S+)')
           if access_vlan:
-            interface_dict['switchport']['access_vlan'] = access_vlan
+            interface_dict['vlan_id'] = access_vlan
+
+          # access vlan
+          voice_vlan = line.re_match(r' switchport voice vlan (\S+)')
+          if voice_vlan:
+            interface_dict['voice_vlan'] = voice_vlan
 
           # switchport mode
           switchport_mode = line.re_match(r'^ switchport mode (\S+)$')
           if switchport_mode:
-            interface_dict['switchport']['mode'] = switchport_mode
+            interface_dict['switchport_mode'] = switchport_mode
 
-          # port-security
-          port_sec = line.re_search(r'^ switchport port-security$')
+          # # port-security
+          # port_sec = line.re_search(r'^ switchport port-security$')
+          # if port_sec:
+          #   interface_dict['switchport']['port_security'] = True
+            
+          # port-security dict
+          port_sec = interface.re_search_children(r'switchport port-security')
           if port_sec:
-            interface_dict['switchport']['port_security'] = True
+            if not 'port_security' in interface_dict:
+              interface_dict['port_security'] = {}
+
+            for line in port_sec:
+
+              # enabled
+              port_sec_bool = line.re_search(r'^ switchport port-security$')
+              if port_sec_bool:
+                interface_dict['port_security']['enabled'] = True
+              
+              # maximum
+              port_sec_max = line.re_match(r'^ switchport port-security maximum (\S+)$')
+              if port_sec_max:
+                interface_dict['port_security']['maximum'] = port_sec_max
+
+          # nonegotiate
+          nonegotiate = line.re_search(r'^ switchport nonegotiate$')
+          if nonegotiate:
+            interface_dict['nonegotiate'] = True
 
           # switchport trunk
           switchport_trunk = line.re_search(r'^ switchport trunk.*$')
           if switchport_trunk:
 
             # Create the trunk dict if it does not yet exist
-            if not 'trunk' in interface_dict['switchport']:
-              interface_dict['switchport']['trunk'] = {}
+            #if not 'trunk' in interface_dict['switchport']:
+            #  interface_dict['trunk'] = {}
 
             # native vlan
             native_vlan = line.re_match(r'^ switchport trunk native vlan (\S+)$')
             if native_vlan:
-              interface_dict['switchport']['trunk']['native_vlan'] = native_vlan
+              interface_dict['native_vlan'] = native_vlan
 
             # allowed vlan
             allowed_vlan = line.re_match(r'^ switchport trunk allowed vlan (\S+)$')
             if allowed_vlan:
-              interface_dict['switchport']['trunk']['allowed_vlan'] = allowed_vlan
+              interface_dict['allowed_vlan'] = allowed_vlan
 
             # trunk encapsulation
             encapsulation = line.re_match(r'^ switchport trunk encapsulation (.+)$')
             if encapsulation:
-              interface_dict['switchport']['trunk']['encapsulation'] = encapsulation
+              interface_dict['encapsulation'] = encapsulation
 
-      # spanning-tree
-      spanning_tree = interface.re_search_children(r'spanning-tree')
-      if spanning_tree:
-        # Create spanning-tree dict if it does not yet exist
-        if not 'spanning_tree' in interface_dict:
-          interface_dict['spanning_tree'] = {}
 
-        for line in spanning_tree:
-
-          # portfast
-          portfast = line.re_search(r'^ spanning-tree portfast$')
-          if portfast:
-            interface_dict['spanning_tree']['portfast'] = True
-
-          # guard_root
-          guard_root = line.re_search(r'^ spanning-tree guard root$')
-          if guard_root:
-            interface_dict['spanning_tree']['guard_root'] = True
 
       # ip
       ip = interface.re_search_children(r'^ ip ')
@@ -150,14 +153,6 @@ def convert_to_yaml(input_config):
           if ip_address:
             interface_dict['ip']['address'] = ip_address
 
-          # ip access_group
-          access_group = re.match('^ ip access-group (\S+) (\S+)$', line.text)
-          if access_group:
-            # Create access_group sub-dict if it does not yet exist
-            if not 'access_group' in interface_dict['ip']:
-              interface_dict['ip']['access_group'] = {}
-
-            interface_dict['ip']['access_group'][access_group.group(1)] = access_group.group(2)
 
           # ip dhcp snooping trust
           dhcp_snooping_trust = line.re_search(r'^ ip dhcp snooping trust$')
@@ -189,28 +184,6 @@ def convert_to_yaml(input_config):
           if no_mroute_cache:
             interface_dict['ip']['mroute_cache_disable'] = True
 
-      # ipv6
-      ipv6 = interface.re_search_children(r'^ ipv6 ')
-      if ipv6:
-        if not 'ipv6' in interface_dict:
-          interface_dict['ipv6'] = []
-
-        for line in ipv6:
-          # ra guard
-          ra_guard = line.re_search(r'^ ipv6 nd raguard$')
-          if ra_guard:
-            interface_dict['ipv6'].append('ra_guard')
-
-          # ipv6 snooping
-          ra_guard = line.re_search(r'^ ipv6 snooping$')
-          if ra_guard:
-            interface_dict['ipv6'].append('ipv6_snooping')
-
-          # ipv6 dhcp guard
-          ra_guard = line.re_search(r'^ ipv6 dhcp guard$')
-          if ra_guard:
-            interface_dict['ipv6'].append('ipv6_dhcp_guard')
-
       # misc
       misc = interface.re_search_children(r'.*')
 
@@ -218,7 +191,7 @@ def convert_to_yaml(input_config):
         for line in misc:
 
           # description
-          interface_description = line.re_match(r'^ description (\S+)$')
+          interface_description = line.re_match(r'^ description (.*)$')
           if interface_description:
             interface_dict['description'] = interface_description
 
@@ -255,118 +228,10 @@ def convert_to_yaml(input_config):
       # Append the completed interface dict to the interfaces list
       output_config['interfaces'].append(interface_dict)
 
-  # IP Config Elements
-  ip_config = input_config.find_objects(r'ip')
-  if ip_config:
-    # Create ip dict if it does not yet exist
-    if not 'ip' in output_config:
-      output_config['ip'] = {}
 
-    for line in ip_config:
+  return yaml.dump(output_config, default_flow_style = 0, explicit_start = 0)
 
-      # ip dhcp snooping
-      dhcp_snooping = line.re_search(r'^ip dhcp snooping$')
-      if dhcp_snooping:
-        output_config['ip']['dhcp_snooping'] = True
 
-      # ip default gateway
-      default_gateway = line.re_match(r'^ip default-gateway (\S+)$')
-      if default_gateway:
-        output_config['ip']['default_gateway'] = default_gateway
-
-  # Banner
-  banner = input_config.find_blocks(r'banner')
-  if banner:
-    # Create banner dict if it does not yet exist
-    if not 'banner' in output_config:
-      output_config['banner'] = []
-
-    for line in banner:
-      first_line = re.search(r'^banner motd (.*)$', line)
-      if first_line:
-        output_config['banner'].append(first_line.group(1))
-      else:
-        output_config['banner'].append(line)
-
-  # acl
-  acl = input_config.find_blocks(r'access-list')
-  if acl:
-    if not 'acl' in output_config:
-      output_config['acl'] = []
-
-    for line in acl:
-      acl_line = re.search(r'^access-list 10 permit (172.*)$', line)
-      if acl_line:
-        output_config['acl'].append(acl_line.group(1))
-
-  # snmp-server
-  snmp = input_config.find_blocks(r'snmp-server')
-  if snmp:
-    # Create snmp dict if it does not yet exist
-    if not 'snmp' in output_config:
-      output_config['snmp'] = {}
-
-    for line in snmp:
-
-      # community string
-      snmp_community = re.match(r'^snmp-server community (\S+)', line)
-      if snmp_community:
-        output_config['snmp']['community'] = snmp_community.group(1)
-
-      # location
-      snmp_location = re.match(r'^snmp-server location (.*)$', line)
-      if snmp_location:
-        output_config['snmp']['location'] = snmp_location.group(1)
-
-      # contact
-      snmp_contact = re.match(r'^snmp-server contact (.*)$', line)
-      if snmp_contact:
-        output_config['snmp']['contact'] = snmp_contact.group(1)
-
-  # vtp
-  vtp = input_config.find_lines(r'vtp')
-  if vtp:
-    vtp_mode = re.match(r'vtp mode (\S+)',vtp[0])
-    if vtp_mode:
-      output_config['vtp_mode'] = vtp_mode.group(1)
-
-  # vlans
-  vlans = input_config.find_objects('^vlan [0-9]+')
-  if vlans:
-    # Create vlans dict if it does not yet exist
-    if not 'vlans' in output_config:
-      output_config['vlans'] = []
-
-    for vlan in vlans:
-      vlan_dict = {}
-
-      # vlan number
-      vlan_number = re.match('^vlan ([0-9]+)$', vlan.text)
-      if vlan_number:
-        vlan_dict['number'] = vlan_number.group(1)
-
-      # vlan name
-      vlan_name = vlan.re_search_children(r'name')
-      if vlan_name:
-        name = vlan_name[0].re_match(r' name (\S+)')
-        vlan_dict['name'] = name
-
-      # Append the completed vlan dict
-      output_config['vlans'].append(vlan_dict)
-
-  # certificates
-  certificate_chain = input_config.find_lines('^crypto pki certificate chain')
-  if certificate_chain:
-    for line in certificate_chain:
-      certificate_chain_search = re.match('^crypto pki certificate chain (\S+)', line)
-      output_config['crypto_chain_id'] = certificate_chain_search.group(1)
-
-  # radius server config
-  radius_servers = input_config.find_objects('radius server')
-  if radius_servers:
-    output_config['dot1x'] = True
-
-  return yaml.dump(output_config, default_flow_style = 0, explicit_start = 1)
 
 def write_output_yaml_to_file(output_yaml, output_path, filename, domain):
   # Make sure the directory we're trying to write to exists. Create it if it doesn't
@@ -374,8 +239,28 @@ def write_output_yaml_to_file(output_yaml, output_path, filename, domain):
     makedirs(output_path)
 
   # Write foo.yml to the subdir in yaml/root_path that corresponds to where we got the input file
-  with open(output_path + splitext(filename)[0] + '.' + domain + '.yml', 'w') as outfile:
+  with open(output_path + filename + '.' + domain + '.yml', 'w') as outfile:
     outfile.write(output_yaml)
+
+
+def regex_yaml(filename):
+    # Open the file and read its contents
+    with open(filename, 'r') as file:
+        file_contents = file.read()
+
+    # Perform the regex search and replace to get the format of FH OOE
+    file_contents = re.sub('\r\n', '\n', file_contents)
+    file_contents = re.sub('  ', '    ', file_contents)
+    file_contents = re.sub('- aname:', ' ', file_contents)
+    file_contents = re.sub(r'(Gigabit.*?)\n', r'\1:\n', file_contents)
+    file_contents = re.sub(r'(.*?vlan.*?)\'(\d*?)\'', r'\1\2', file_contents)
+    file_contents = re.sub(r'(description: \'.*?)\n\s*(.*?\')', r'\1 \2', file_contents)
+    file_contents = re.sub(r'(description: )\'(.*?)\'', r'\1"\2"', file_contents)
+
+    # Write the updated contents back to the file
+    with open(filename, 'w') as file:
+        file.write(file_contents)
+
 
 if __name__ == '__main__':
   main()
