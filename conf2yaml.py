@@ -58,7 +58,7 @@ def convert_to_yaml(input_config):
       # Insert interface name
       interface_name = interface.re_match(r'^interface (\S+)$')
       if interface_name:
-          interface_dict['aname'] = interface_name
+          interface_dict['aaname'] = interface_name
 
       # switchport
 
@@ -251,11 +251,12 @@ def regex_yaml(filename):
     # Perform the regex search and replace to get the format of FH OOE
     file_contents = re.sub('\r\n', '\n', file_contents)
     file_contents = re.sub('  ', '    ', file_contents)
-    file_contents = re.sub('- aname:', ' ', file_contents)
+    file_contents = re.sub('- aaname:', ' ', file_contents)
     file_contents = re.sub(r'(Gigabit.*?)\n', r'\1:\n', file_contents)
     file_contents = re.sub(r'(.*?vlan.*?)\'(\d*?)\'', r'\1\2', file_contents)
     file_contents = re.sub(r'(description: \'.*?)\n\s*(.*?\')', r'\1 \2', file_contents)
-    file_contents = re.sub(r'(description: )\'(.*?)\'', r'\1"\2"', file_contents)
+    file_contents = re.sub(r'(description: )\'(.*?)\'', r'\1\2', file_contents)
+    file_contents = re.sub(r'(description: )(.*?)\n', r'\1"\2"\n', file_contents)
 
     # Write the updated contents back to the file
     with open(filename, 'w') as file:
